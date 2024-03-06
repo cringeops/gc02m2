@@ -6,6 +6,8 @@ a rookie attempt to bring gc02m2 image sensor support for PineTab 2
 This is the only "documentation" we have for the gc02m2 image sensor module used in PineTab 2 as a frontal camera.
 It has been forked from Rockchip repository, stripped of some RK stuff, and shaped enough to be compiled against kernel 6.6.
 
+Feel free to contact me on Matrix at @cringeops:matrix.org.
+
 ## TODO
 - Find out why the sensor is not powering up properly <-- we are here
 - Bring 2-lane CSI support for RK devices (good luck with that)
