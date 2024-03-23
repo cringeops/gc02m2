@@ -32,10 +32,6 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/slab.h>
 
-#include "rk-camera-module.h"
-
-#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x02)
-
 #ifndef V4L2_CID_DIGITAL_GAIN
 #define V4L2_CID_DIGITAL_GAIN		V4L2_CID_GAIN
 #endif
@@ -66,7 +62,7 @@
 #define GC02M2_PREGAIN_H_REG	0xb1
 #define GC02M2_PREGAIN_L_REG	0xb2
 #define GC02M2_GAIN_MIN			0x40
-#define GC02M2_GAIN_MAX			0x286
+#define GC02M2_GAIN_MAX			0x300
 #define GC02M2_GAIN_STEP		1
 #define GC02M2_GAIN_DEFAULT		0x80
 
@@ -79,15 +75,13 @@
 
 #define GC02M2_LANES			1
 #define GC02M2_BITS_PER_SAMPLE	10
-#define OF_CAMERA_PINCTRL_STATE_DEFAULT	"rockchip,camera_default"
-#define OF_CAMERA_PINCTRL_STATE_SLEEP	"rockchip,camera_sleep"
 #define GC02M2_NAME			"gc02m2"
 #define REG_NULL				0xFF
 
 static const char * const gc02m2_supply_names[] = {
-	"dovdd",	/* Digital I/O power */
-	"avdd",		/* Analog power */
-	"dvdd",		/* Digital core power */
+       "dovdd",        /* Digital I/O power */
+       "avdd",         /* Analog power */
+       "dvdd",         /* Digital core power */
 };
 
 #define GC02M2_NUM_SUPPLIES ARRAY_SIZE(gc02m2_supply_names)
@@ -113,8 +107,6 @@ struct gc02m2_mode {
 	u32 vts_def;
 	u32 exp_def;
 	const struct regval *reg_list;
-	u32 hdr_mode;
-	u32 vc[PAD_MAX];
 };
 
 struct gc02m2 {
@@ -150,7 +142,7 @@ static const struct regval gc02m2_global_regs[] = {
 	/*system*/
 	{0xfc, 0x01},
 	{0xf4, 0x41},
-	{0xf5, 0xc0},
+	{0xf5, 0xe3},
 	{0xf6, 0x44},
 	{0xf8, 0x38},
 	{0xf9, 0x82},
@@ -206,7 +198,7 @@ static const struct regval gc02m2_global_regs[] = {
 	/*analog voltage*/
 	{0x39, 0x07},
 	{0x43, 0x04},
-	{0x46, 0x2a},
+	{0x46, 0x4a},
 	{0x7c, 0xa0},
 	{0xd0, 0xbe},
 	{0xd1, 0x40},
@@ -331,17 +323,17 @@ static const struct regval gc02m2_global_regs[] = {
 	{0x4d, 0x0c},
 	{0x44, 0x08},
 	{0x48, 0x03},
-	/*Window 1600X1200*/
+	/*Window 1280X720*/
 	{0xfe, 0x01},
 	{0x90, 0x01},
 	{0x91, 0x00},
 	{0x92, 0x06},
 	{0x93, 0x00},
 	{0x94, 0x06},
-	{0x95, 0x04},
-	{0x96, 0xb0},
-	{0x97, 0x06},
-	{0x98, 0x40},
+	{0x95, 0x02},
+	{0x96, 0xd0},
+	{0x97, 0x05},
+	{0x98, 0x00},
 	/*mipi*/
 	{0xfe, 0x03},
 	{0x01, 0x23},
@@ -364,8 +356,8 @@ static const struct regval gc02m2_global_regs[] = {
 
 static const struct gc02m2_mode supported_modes[] = {
 	{
-		.width = 1600,
-		.height = 1200,
+		.width = 1280,
+		.height = 720,
 		.max_fps = {
 			.numerator = 10000,
 			.denominator = 300000,
@@ -375,7 +367,6 @@ static const struct gc02m2_mode supported_modes[] = {
 		.hts_def = 0x0448 * 2,
 		.vts_def = 0x04f4,
 		.reg_list = gc02m2_global_regs,
-		.hdr_mode = NO_HDR,
 	},
 };
 
@@ -398,7 +389,7 @@ static int gc02m2_write_reg(struct i2c_client *client, u8 reg, u8 val)
 	msg.len = sizeof(buf);
 
 	ret = i2c_transfer(client->adapter, &msg, 1);
-	if (ret >= 0) 
+	if (ret >= 0)
 		return 0;
 
 	dev_err(&client->dev,
@@ -443,9 +434,7 @@ static int gc02m2_read_reg(struct i2c_client *client, u8 reg, u8 *val)
 		return 0;
 	}
 
-	dev_err(&client->dev,
-		"gc02m2 read reg:0x%x failed !\n", reg);
-
+	dev_err(&client->dev, "read reg 0x%x failed with code %d\n", reg, ret);
 	return ret;
 }
 
@@ -497,7 +486,7 @@ static u32 GC02M2_AGC_Param[17][2] = {
 };
 
 static int gc02m2_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *state,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct gc02m2 *gc02m2 = to_gc02m2(sd);
@@ -513,7 +502,7 @@ static int gc02m2_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&gc02m2->mutex);
 		return -ENOTTY;
@@ -535,7 +524,7 @@ static int gc02m2_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc02m2_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *state,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct gc02m2 *gc02m2 = to_gc02m2(sd);
@@ -544,7 +533,7 @@ static int gc02m2_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&gc02m2->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
 #else
 		mutex_unlock(&gc02m2->mutex);
 		return -ENOTTY;
@@ -554,11 +543,6 @@ static int gc02m2_get_fmt(struct v4l2_subdev *sd,
 		fmt->format.height = mode->height;
 		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
-		/* format info: width/height/data type/virctual channel */
-		if (fmt->pad < PAD_MAX && mode->hdr_mode != NO_HDR)
-			fmt->reserved[0] = mode->vc[fmt->pad];
-		else
-			fmt->reserved[0] = mode->vc[PAD0];
 	}
 	mutex_unlock(&gc02m2->mutex);
 
@@ -566,7 +550,7 @@ static int gc02m2_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc02m2_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *state,
+				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct gc02m2 *gc02m2 = to_gc02m2(sd);
@@ -579,7 +563,7 @@ static int gc02m2_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int gc02m2_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *state,
+				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -608,116 +592,6 @@ static int gc02m2_g_frame_interval(struct v4l2_subdev *sd,
 
 	return 0;
 }
-
-static long gc02m2_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
-{
-	struct gc02m2 *gc02m2 = to_gc02m2(sd);
-	struct rkmodule_hdr_cfg *hdr_cfg;
-	long ret = 0;
-	int i, w, h;
-	u32 stream = 0;
-
-	switch (cmd) {
-	case RKMODULE_SET_QUICK_STREAM:
-		stream = *((u32 *)arg);
-		if (stream) {
-			ret = gc02m2_write_reg(gc02m2->client, GC02M2_PAGE_SELECT, 0x00);
-			ret |= gc02m2_write_reg(gc02m2->client, GC02M2_MODE_SELECT,
-						 GC02M2_MODE_STREAMING);
-			ret |= gc02m2_write_reg(gc02m2->client, GC02M2_PAGE_SELECT, 0x00);
-		} else {
-			ret = gc02m2_write_reg(gc02m2->client, GC02M2_PAGE_SELECT, 0x00);
-			ret |= gc02m2_write_reg(gc02m2->client, GC02M2_MODE_SELECT,
-						 GC02M2_MODE_SW_STANDBY);
-			ret |= gc02m2_write_reg(gc02m2->client, GC02M2_PAGE_SELECT, 0x00);
-		}
-		break;
-		
-	case RKMODULE_GET_HDR_CFG:
-		hdr_cfg = (struct rkmodule_hdr_cfg *)arg;
-		hdr_cfg->esp.mode = HDR_NORMAL_VC;
-		hdr_cfg->hdr_mode = gc02m2->cur_mode->hdr_mode;
-		break;
-	case RKMODULE_SET_HDR_CFG:
-		hdr_cfg = (struct rkmodule_hdr_cfg *)arg;
-		w = gc02m2->cur_mode->width;
-		h = gc02m2->cur_mode->height;
-		for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
-			if (w == supported_modes[i].width &&
-			    h == supported_modes[i].height &&
-			    supported_modes[i].hdr_mode == hdr_cfg->hdr_mode) {
-				gc02m2->cur_mode = &supported_modes[i];
-				break;
-			}
-		}
-		if (i == ARRAY_SIZE(supported_modes)) {
-			dev_err(&gc02m2->client->dev,
-				"not find hdr mode:%d %dx%d config\n",
-				hdr_cfg->hdr_mode, w, h);
-			ret = -EINVAL;
-		} else {
-			w = gc02m2->cur_mode->hts_def - gc02m2->cur_mode->width;
-			h = gc02m2->cur_mode->vts_def - gc02m2->cur_mode->height;
-			__v4l2_ctrl_modify_range(gc02m2->hblank, w, w, 1, w);
-			__v4l2_ctrl_modify_range(gc02m2->vblank, h,
-						 GC02M2_VTS_MAX - gc02m2->cur_mode->height, 1, h);
-		}
-		break;
-	default:
-		ret = -ENOIOCTLCMD;
-		break;
-	}
-
-	return ret;
-}
-
-#ifdef CONFIG_COMPAT
-static long gc02m2_compat_ioctl32(struct v4l2_subdev *sd,
-				  unsigned int cmd, unsigned long arg)
-{
-	void __user *up = compat_ptr(arg);
-	struct rkmodule_hdr_cfg *hdr;
-	long ret;
-	u32 stream = 0;
-
-	switch (cmd) {
-	case RKMODULE_GET_HDR_CFG:
-		hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
-		if (!hdr) {
-			ret = -ENOMEM;
-			return ret;
-		}
-
-		ret = gc02m2_ioctl(sd, cmd, hdr);
-		if (!ret)
-			ret = copy_to_user(up, hdr, sizeof(*hdr));
-		kfree(hdr);
-		break;
-	case RKMODULE_SET_HDR_CFG:
-		hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
-		if (!hdr) {
-			ret = -ENOMEM;
-			return ret;
-		}
-
-		ret = copy_from_user(hdr, up, sizeof(*hdr));
-		if (!ret)
-			ret = gc02m2_ioctl(sd, cmd, hdr);
-		kfree(hdr);
-		break;
-	case RKMODULE_SET_QUICK_STREAM:
-		ret = copy_from_user(&stream, up, sizeof(u32));
-		if (!ret)
-			ret = gc02m2_ioctl(sd, cmd, &stream);
-		break;
-	default:
-		ret = -ENOIOCTLCMD;
-		break;
-	}
-
-	return ret;
-}
-#endif
 
 /* Calculate the delay in us by clock rate and clock cycles */
 static inline u32 gc02m2_cal_delay(u32 cycles)
@@ -777,21 +651,11 @@ disable_clk:
 
 static void __gc02m2_power_off(struct gc02m2 *gc02m2)
 {
-
-	int ret;
-	struct device *dev = &gc02m2->client->dev;
-
 	if (!IS_ERR(gc02m2->pwdn_gpio))
 		gpiod_set_value_cansleep(gc02m2->pwdn_gpio, 1);
 	clk_disable_unprepare(gc02m2->xvclk);
 	if (!IS_ERR(gc02m2->reset_gpio))
 		gpiod_set_value_cansleep(gc02m2->reset_gpio, 1);
-	if (!IS_ERR_OR_NULL(gc02m2->pins_sleep)) {
-		ret = pinctrl_select_state(gc02m2->pinctrl,
-					   gc02m2->pins_sleep);
-		if (ret < 0)
-			dev_dbg(dev, "could not set pins\n");
-	}
 	regulator_bulk_disable(GC02M2_NUM_SUPPLIES, gc02m2->supplies);
 	gc02m2->power_on = false;
 }
@@ -946,7 +810,7 @@ static int gc02m2_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int gc02m2_enum_frame_interval(struct v4l2_subdev *sd,
-					struct v4l2_subdev_state *state,
+					struct v4l2_subdev_state *sd_state,
 					struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -956,7 +820,6 @@ static int gc02m2_enum_frame_interval(struct v4l2_subdev *sd,
 	fie->width = supported_modes[fie->index].width;
 	fie->height = supported_modes[fie->index].height;
 	fie->interval = supported_modes[fie->index].max_fps;
-	fie->reserved[0] = supported_modes[fie->index].hdr_mode;
 	return 0;
 }
 
@@ -973,10 +836,6 @@ static const struct v4l2_subdev_internal_ops gc02m2_internal_ops = {
 
 static const struct v4l2_subdev_core_ops gc02m2_core_ops = {
 	.s_power = gc02m2_s_power,
-	.ioctl = gc02m2_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl32 = gc02m2_compat_ioctl32,
-#endif
 };
 
 static const struct v4l2_subdev_video_ops gc02m2_video_ops = {
@@ -1072,7 +931,7 @@ static int gc02m2_set_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_ANALOGUE_GAIN:
 		ret = gc02m2_set_gain_reg(gc02m2, ctrl->val);
 		break;
-	case V4L2_CID_VBLANK:	
+	case V4L2_CID_VBLANK:
 		vts = ctrl->val + gc02m2->cur_mode->height;
 		ret = gc02m2_write_reg(gc02m2->client,
 					 GC02M2_PAGE_SELECT, 0x00);
@@ -1266,11 +1125,6 @@ static int gc02m2_probe(struct i2c_client *client)
 	struct v4l2_subdev *sd;
 	int ret;
 
-	dev_info(dev, "driver version: %02x.%02x.%02x",
-		DRIVER_VERSION >> 16,
-		(DRIVER_VERSION & 0xff00) >> 8,
-		DRIVER_VERSION & 0x00ff);
-
 	gc02m2 = devm_kzalloc(dev, sizeof(*gc02m2), GFP_KERNEL);
 	if (!gc02m2)
 		return -ENOMEM;
@@ -1297,21 +1151,8 @@ static int gc02m2_probe(struct i2c_client *client)
 		return -EINVAL;
 
 	gc02m2->pinctrl = devm_pinctrl_get(dev);
-	if (!IS_ERR(gc02m2->pinctrl)) {
-		gc02m2->pins_default =
-			pinctrl_lookup_state(gc02m2->pinctrl,
-					     OF_CAMERA_PINCTRL_STATE_DEFAULT);
-		if (IS_ERR(gc02m2->pins_default))
-			dev_err(dev, "could not get default pinstate\n");
-
-		gc02m2->pins_sleep =
-			pinctrl_lookup_state(gc02m2->pinctrl,
-					     OF_CAMERA_PINCTRL_STATE_SLEEP);
-		if (IS_ERR(gc02m2->pins_sleep))
-			dev_err(dev, "could not get sleep pinstate\n");
-	} else {
+	if (IS_ERR(gc02m2->pinctrl))
 		dev_err(dev, "no pinctrl\n");
-	}
 
 	ret = gc02m2_configure_regulators(gc02m2);
 	if (ret) {
@@ -1339,15 +1180,12 @@ static int gc02m2_probe(struct i2c_client *client)
 	sd->internal_ops = &gc02m2_internal_ops;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 #endif
-#if defined(CONFIG_MEDIA_CONTROLLER)
 	gc02m2->pad.flags = MEDIA_PAD_FL_SOURCE;
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	ret = media_entity_pads_init(&sd->entity, 1, &gc02m2->pad);
 	if (ret < 0)
 		goto err_power_off;
-#endif
 
-	snprintf(sd->name, sizeof(sd->name), GC02M2_NAME);
 	ret = v4l2_async_register_subdev_sensor(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
@@ -1361,9 +1199,7 @@ static int gc02m2_probe(struct i2c_client *client)
 	return 0;
 
 err_clean_entity:
-#if defined(CONFIG_MEDIA_CONTROLLER)
 	media_entity_cleanup(&sd->entity);
-#endif
 err_power_off:
 	__gc02m2_power_off(gc02m2);
 err_free_handler:
@@ -1380,9 +1216,7 @@ static void gc02m2_remove(struct i2c_client *client)
 	struct gc02m2 *gc02m2 = to_gc02m2(sd);
 
 	v4l2_async_unregister_subdev(sd);
-#if defined(CONFIG_MEDIA_CONTROLLER)
 	media_entity_cleanup(&sd->entity);
-#endif
 	v4l2_ctrl_handler_free(&gc02m2->ctrl_handler);
 	mutex_destroy(&gc02m2->mutex);
 
